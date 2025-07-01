@@ -34,7 +34,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Driver Check-In Portal</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.min.js"></script>
+    <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.min.js"></script> --> {/* SQL.js removed */}
     <style>
         body { margin: 0; padding: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; font-family: 'Inter', sans-serif; }
         .app-scaler { width: 100%; max-width: 100vw; box-sizing: border-box; }
@@ -49,12 +49,12 @@
         .checkin-timestamp, .signout-timestamp { display: inline-block; min-width: 60px; text-align: center; padding: 0.25rem 0.5rem; border-radius: 0.375rem; }
         .fixed-buttons { position: fixed; bottom: 20px; right: 20px; z-index: 100; display: flex; flex-direction: column; gap: 0.5rem; }
         @media (min-width: 768px) { /* md breakpoint for more space */
-            .fixed-buttons { 
-                flex-direction: row; 
+            .fixed-buttons {
+                flex-direction: row;
                 flex-wrap: wrap; /* Allow buttons to wrap if too many */
                 justify-content: flex-end; /* Align to the right */
                 gap: 0.75rem; /* Tailwind gap-3 */
-            } 
+            }
         }
         .loading-message, .error-message { text-align: center; padding: 20px; color: #333; }
         .error-message { color: #dc2626; }
@@ -113,12 +113,12 @@
 
     <script>
         // Global database variable
-        let db;
+        // let db; // SQL.js db instance removed
         // Global array for current drivers in the UI
-        let drivers = []; 
+        let drivers = [];
         // Global variables for context menu state
         let selectedDriverId = null;
-        let selectedTimestamp = null;
+        let selectedTimestamp = null; // This might refer to the prefixed timestamp from the UI
         let addCallDriverId = null;
         // Global variable for sort order
         let sortByClearedOrder = false; // false = sort by sign-in, true = sort by (most recent) cleared time
@@ -132,7 +132,7 @@
             document.getElementById('loadingMessage').style.display = 'none';
             document.getElementById('appContent').classList.remove('hidden');
         }
-        function showInitError(message) {
+        function showInitError(message) { // May repurpose for general app init errors
             const loadingMsgEl = document.getElementById('loadingMessage');
             if (loadingMsgEl) {
                 loadingMsgEl.innerHTML = `<div class="error-message p-4 bg-red-100 text-red-700 border border-red-400 rounded-md">${message}</div>`;
@@ -153,189 +153,22 @@
             }
         }
 
-        // Database initialization and management
-        async function initDb() {
-            console.log('[DB Init] Starting database initialization...');
-            try {
-                const SQL = await initSqlJs({ locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}` });
-                console.log('[DB Init] SQL.js WASM loaded.');
-                const savedDbString = localStorage.getItem('driverPortalDb');
-                if (savedDbString) {
-                    console.log('[DB Init] Found saved database string in localStorage.');
-                    try {
-                        const dbArray = new Uint8Array(JSON.parse(savedDbString));
-                        db = new SQL.Database(dbArray);
-                        console.log('[DB Init] Database successfully parsed and loaded from localStorage.');
-                    } catch (parseError) {
-                        console.error('[DB Init] Error parsing saved database from localStorage:', parseError);
-                        showError('Error loading saved data. Starting fresh. Details: ' + parseError.message);
-                        localStorage.removeItem('driverPortalDb');
-                        db = new SQL.Database();
-                        console.log('[DB Init] Created a new empty database after parse error.');
-                        await verifyAndCreateTables(db);
-                    }
-                } else {
-                    console.log('[DB Init] No saved database found. Creating a new database.');
-                    db = new SQL.Database();
-                    await verifyAndCreateTables(db);
-                }
-                if (db) {
-                    console.log('[DB Init] Verifying table structures (post-load/create)...');
-                    await verifyAndCreateTables(db);
-                    saveDb();
-                    console.log('[DB Init] Database tables verified/created and initial state saved.');
-                } else {
-                     throw new Error("[DB Init] DB object is unexpectedly null after load/creation.");
-                }
-            } catch (e) {
-                console.error('[DB Init] CRITICAL FAILURE during database initialization:', e);
-                showInitError('App Error: Could not initialize the database. Error: ' + e.message);
-                try {
-                    console.warn('[DB Init] Attempting fallback in-memory database...');
-                    const SQL = await initSqlJs({ locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}` });
-                    db = new SQL.Database();
-                    console.log('[DB Init] Fallback in-memory database created. Data will NOT persist.');
-                    showError('Warning: Using a temporary database. Data will not be saved.');
-                } catch (fallbackError) {
-                    console.error('[DB Init] CRITICAL: Failed to create fallback database:', fallbackError);
-                    showInitError('FATAL APP ERROR: Database unavailable. Error: ' + fallbackError.message);
-                    db = null;
-                }
-            }
-            console.log(`[DB Init] Process finished. DB object is ${db ? "VALID" : "NULL"}.`);
-        }
-
-        async function verifyAndCreateTables(databaseInstance) {
-            if (!databaseInstance) { console.error("[DB Verify] DB instance is null."); return; }
-            console.log("[DB Verify] Ensuring all tables exist and have correct schema...");
-            databaseInstance.run(`CREATE TABLE IF NOT EXISTS drivers (id INTEGER PRIMARY KEY, name TEXT NOT NULL);`);
-            databaseInstance.run(`CREATE TABLE IF NOT EXISTS check_ins (id INTEGER PRIMARY KEY AUTOINCREMENT, driver_id INTEGER, date TEXT, check_in_time TEXT, sign_out_time TEXT, FOREIGN KEY (driver_id) REFERENCES drivers(id));`);
-            databaseInstance.run(`CREATE TABLE IF NOT EXISTS calls (id INTEGER PRIMARY KEY AUTOINCREMENT, check_in_id INTEGER, timestamp TEXT, FOREIGN KEY (check_in_id) REFERENCES check_ins(id));`);
-            databaseInstance.run(`CREATE TABLE IF NOT EXISTS call_status (id INTEGER PRIMARY KEY AUTOINCREMENT, check_in_id INTEGER, call_timestamp TEXT, status TEXT, status_timestamp TEXT, FOREIGN KEY (check_in_id) REFERENCES check_ins(id));`);
-            const csInfo = databaseInstance.exec("PRAGMA table_info(call_status);");
-            if (csInfo && csInfo[0]) {
-                const csCols = csInfo[0].values.map(col => col[1]);
-                if (!csCols.includes('call_timestamp')) { databaseInstance.run('ALTER TABLE call_status ADD COLUMN call_timestamp TEXT;'); console.log("[DB Verify] Added 'call_timestamp' to 'call_status'.");}
-                if (!csCols.includes('status_timestamp')) { databaseInstance.run('ALTER TABLE call_status ADD COLUMN status_timestamp TEXT;'); console.log("[DB Verify] Added 'status_timestamp' to 'call_status'.");}
-            } else { console.warn("[DB Verify] Could not get PRAGMA info for call_status."); }
-            databaseInstance.run(`CREATE TABLE IF NOT EXISTS shifts (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, total_drivers INTEGER, total_calls INTEGER, total_canceled_calls INTEGER);`);
-            console.log("[DB Verify] Table verification/creation complete.");
-        }
-        
-        function saveDb() {
-            if (!db) { return; }
-            try {
-                const dbData = db.export();
-                localStorage.setItem('driverPortalDb', JSON.stringify(Array.from(dbData)));
-            } catch (e) {
-                console.error('[DB Save] Error saving DB to localStorage:', e); showError('Error saving data: ' + e.message);
-            }
-        }
+        // Database related functions (initDb, verifyAndCreateTables, saveDb) removed.
+        // saveDrivers function (localStorage for drivers array) removed.
 
         function exportDatabase() {
-            console.log(`[Export DB] Clicked. DB: ${db ? "OK" : "NULL"}`);
-            if (!db) { showError('DB not available. Cannot export SQLite.'); return; }
-            try {
-                const dbData = db.export();
-                const blob = new Blob([dbData], { type: 'application/octet-stream' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url; a.download = `driver_portal_db_${new Date().toISOString().split('T')[0]}.sqlite`;
-                document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-                console.log('[Export DB] SQLite DB exported.');
-            } catch (e) {
-                showError('Failed to export SQLite DB: ' + e.message); console.error('[Export DB] Error:', e);
-            }
+            console.log('[Export DB] Requesting SQLite DB from backend...');
+            window.location.href = 'http://localhost:3000/api/export/sqlite';
         }
 
         function exportToCSV() {
-            console.log(`[Export CSV] Function called. DB status: ${db ? "VALID" : "NULL"}`);
-            if (!db) {
-                showError('Database is not available. Cannot export to CSV.');
-                console.error('[Export CSV] Aborted: Database not initialized.');
-                return;
-            }
-            try {
-                console.log('[Export CSV] Step 1: Preparing SQL query...');
-                let stmt;
-                try {
-                    stmt = db.prepare(`
-                        SELECT ci.date, d.name AS driver_name, ci.check_in_time, ci.sign_out_time, 
-                               c.timestamp AS call_timestamp_with_prefix, cs.status AS call_status, cs.status_timestamp
-                        FROM check_ins ci JOIN drivers d ON ci.driver_id = d.id
-                        LEFT JOIN calls c ON c.check_in_id = ci.id
-                        LEFT JOIN call_status cs ON cs.check_in_id = ci.id AND cs.call_timestamp = c.timestamp
-                        ORDER BY ci.date DESC, d.name, ci.check_in_time, c.timestamp;`);
-                    console.log('[Export CSV] Step 2: SQL query prepared successfully.');
-                } catch (e) {
-                    console.error('[Export CSV] Error preparing SQL statement:', e);
-                    showError('Error preparing data for CSV: ' + e.message); return;
-                }
-                const rows = [];
-                console.log('[Export CSV] Step 3: Fetching rows...');
-                while (stmt.step()) { rows.push(stmt.getAsObject()); }
-                stmt.free();
-                console.log(`[Export CSV] Step 4: Fetched ${rows.length} rows.`);
-                if (rows.length === 0) { showError('No data available to export to CSV.'); console.log('[Export CSV] No data to export.'); return; }
-                console.log('[Export CSV] Step 5: Generating CSV content...');
-                let csvContent = "Date,Driver Name,Check-In Time,Sign-Out Time,Call Timestamp,Call Type,Status,Status Timestamp\n";
-                rows.forEach(row => {
-                    const callTimestampWithPrefix = row.call_timestamp_with_prefix || "";
-                    let callType = ""; let actualCallTime = callTimestampWithPrefix; 
-                    if (callTimestampWithPrefix.includes(" ")) {
-                        const parts = callTimestampWithPrefix.split(/ (.*)/s); 
-                        if (parts.length > 1) { callType = parts[0]; actualCallTime = parts[1] || ""; }
-                    }
-                    const escapeCSV = (field) => {
-                        if (field === null || typeof field === 'undefined') return '';
-                        let str = String(field); str = str.replace(/"/g, '""'); 
-                        if (str.includes(',') || str.includes('\n') || str.includes('"')) { str = '"' + str + '"'; }
-                        return str;
-                    };
-                    csvContent += [
-                        escapeCSV(row.date), escapeCSV(row.driver_name), escapeCSV(row.check_in_time),
-                        escapeCSV(row.sign_out_time || ""), escapeCSV(actualCallTime), escapeCSV(callType),
-                        escapeCSV(row.call_status || ""), escapeCSV(row.status_timestamp || "")
-                    ].join(',') + '\n';
-                });
-                console.log('[Export CSV] Step 6: CSV content generated. Length:', csvContent.length);
-                if (csvContent.length < 500) {  console.log('[Export CSV] CSV Sample:', csvContent); }
-                console.log('[Export CSV] Step 7: Creating Blob...');
-                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                console.log('[Export CSV] Blob created:', blob);
-                console.log('[Export CSV] Step 8: Creating Object URL...');
-                const url = URL.createObjectURL(blob);
-                console.log('[Export CSV] Object URL created:', url);
-                if (!url) { console.error('[Export CSV] CRITICAL: Failed to create Object URL.'); showError('Error creating download link for CSV.'); return; }
-                console.log('[Export CSV] Step 9: Creating download link element (<a>)...');
-                const a = document.createElement('a');
-                a.href = url; const fileName = `driver_portal_data_${new Date().toISOString().split('T')[0]}.csv`;
-                a.download = fileName;
-                console.log(`[Export CSV] Download link properties set: href=${a.href}, download=${a.download}`);
-                console.log('[Export CSV] Step 10: Appending link to document body...');
-                document.body.appendChild(a);
-                console.log('[Export CSV] Link appended to body.');
-                console.log('[Export CSV] Step 11: Programmatically clicking download link...');
-                try {
-                    a.click(); console.log('[Export CSV] Step 12: `a.click()` executed.');
-                } catch (clickError) {
-                    console.error('[Export CSV] Error during `a.click()`:', clickError);
-                    showError('Error triggering CSV download: ' + clickError.message);
-                }
-                console.log('[Export CSV] Step 13: Removing link from document body...');
-                document.body.removeChild(a);
-                console.log('[Export CSV] Link removed from body.');
-                console.log('[Export CSV] Step 14: Revoking Object URL...');
-                URL.revokeObjectURL(url);
-                console.log('[Export CSV] Step 15: CSV export process finished.');
-            } catch (e) {
-                showError('Failed to export data to CSV: ' + e.message);
-                console.error('[Export CSV] Error during CSV export process:', e);
-            }
+            console.log('[Export CSV] Requesting CSV data from backend...');
+            window.location.href = 'http://localhost:3000/api/export/csv';
         }
 
         function showContextMenu(event, driverId, callFullTimestamp) {
             event.preventDefault(); selectedDriverId = driverId; selectedTimestamp = callFullTimestamp;
+            // selectedTimestamp here is the one displayed in UI, e.g., "Acc 12:34:56"
             const menu = document.getElementById('contextMenu');
             menu.style.left = `${event.pageX}px`; menu.style.top = `${event.pageY}px`; menu.classList.remove('hidden');
             document.addEventListener('click', hideContextMenus, { once: true });
@@ -347,7 +180,12 @@
             document.addEventListener('click', hideContextMenus, { once: true });
         }
         function showStatusChangeMenu(event, driverId, callFullTimestamp, currentStatus) {
-            event.preventDefault(); if (currentStatus !== 'cancelled') return;
+            event.preventDefault();
+            // Client-side check if currentStatus is 'cancelled' can remain or be removed if backend handles all validation
+            if (currentStatus !== 'cancelled') {
+                 console.log("Status change menu only for 'cancelled' calls currently.");
+                 return;
+            }
             selectedDriverId = driverId; selectedTimestamp = callFullTimestamp;
             const menu = document.getElementById('statusChangeMenu');
             menu.style.left = `${event.pageX}px`; menu.style.top = `${event.pageY}px`; menu.classList.remove('hidden');
@@ -356,297 +194,296 @@
         function hideContextMenus() {
             ['contextMenu', 'addCallMenu', 'statusChangeMenu'].forEach(id => document.getElementById(id).classList.add('hidden'));
         }
-        
-        function handleContextMenu(action) {
-            console.log(`[Ctx Menu] Action: ${action}, Drv: ${selectedDriverId}, TS: ${selectedTimestamp}. DB: ${db?"OK":"NULL"}`);
-            if (!selectedDriverId || !selectedTimestamp || !db) { showError("Cannot process: Invalid data or DB unavailable."); return; }
-            const today = new Date().toISOString().split('T')[0];
-            const time = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit', second: '2-digit', hour12:false}); 
-            console.log(`[Ctx Menu] Recording status_timestamp as: ${time}`);
-            try {
-                const res = db.exec('SELECT id FROM check_ins WHERE driver_id=? AND date=?',[selectedDriverId,today]);
-                if (!res[0]||!res[0].values[0]) throw new Error('Active check-in not found.');
-                const ciId = res[0].values[0][0];
-                const ex = db.exec('SELECT id FROM call_status WHERE check_in_id=? AND call_timestamp=?',[ciId,selectedTimestamp]);
-                if (ex[0]&&ex[0].values.length>0) db.run('UPDATE call_status SET status=?,status_timestamp=? WHERE id=?',[action,time,ex[0].values[0][0]]);
-                else db.run('INSERT INTO call_status(check_in_id,call_timestamp,status,status_timestamp)VALUES(?,?,?,?)',[ciId,selectedTimestamp,action,time]);
-                saveDb(); renderDrivers(); 
-            } catch(e){ showError(`Error setting status: ${e.message}`); console.error('[Ctx Menu] Error:',e); }
-            selectedDriverId=null; selectedTimestamp=null;
+
+        async function handleContextMenu(action) {
+            if (!selectedDriverId || !selectedTimestamp) {
+                showError("Cannot set call status: Driver or timestamp not selected.");
+                return;
+            }
+            console.log(`Attempting to set call status to '${action}' for driver ID: ${selectedDriverId}, timestamp: ${selectedTimestamp}`);
+
+            await fetchWithFeedback(
+                `http://localhost:3000/api/calls/status`,
+                'PUT',
+                {
+                    driverId: selectedDriverId,
+                    callTimestamp: selectedTimestamp, // This is the full "Type HH:MM:SS" string
+                    status: action
+                },
+                `Call status set to ${action}!` // Default success message
+            );
+
+            selectedDriverId = null;
+            selectedTimestamp = null;
+            // fetchAndRenderDrivers() is called by fetchWithFeedback on success
         }
 
-        function changeStatusToCleared() {
-            console.log(`[ChangeStatus] To Cleared. Drv: ${selectedDriverId}, TS: ${selectedTimestamp}. DB: ${db?"OK":"NULL"}`);
-            if (!selectedDriverId||!selectedTimestamp||!db) { showError("Cannot change: Invalid data or DB unavailable."); return; }
-            const today = new Date().toISOString().split('T')[0];
-            const time = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit', second: '2-digit', hour12:false}); 
-            console.log(`[ChangeStatus] Recording new status_timestamp as: ${time}`);
-            try {
-                const res = db.exec('SELECT id FROM check_ins WHERE driver_id=? AND date=?',[selectedDriverId,today]);
-                if(!res[0]||!res[0].values[0]) throw new Error('Active check-in not found.');
-                const ciId = res[0].values[0][0];
-                const upd = db.run('UPDATE call_status SET status="cleared",status_timestamp=? WHERE check_in_id=? AND call_timestamp=? AND status="cancelled"',[time,ciId,selectedTimestamp]);
-                if(upd.changes===0) console.warn('[ChangeStatus] No status updated.');
-                saveDb(); renderDrivers(); 
-            } catch(e){ showError(`Error changing status: ${e.message}`); console.error('[ChangeStatus] Error:',e); }
-            selectedDriverId=null; selectedTimestamp=null;
+        async function changeStatusToCleared() {
+            if (!selectedDriverId || !selectedTimestamp) {
+                showError("Cannot change call status: Driver or timestamp not selected.");
+                return;
+            }
+            console.log(`Attempting to change call status to 'cleared' for driver ID: ${selectedDriverId}, timestamp: ${selectedTimestamp}`);
+
+            await fetchWithFeedback(
+                `http://localhost:3000/api/calls/status`,
+                'PUT',
+                {
+                    driverId: selectedDriverId,
+                    callTimestamp: selectedTimestamp, // This is the full "Type HH:MM:SS" string
+                    status: 'cleared'
+                },
+                'Call status changed to cleared!' // Default success message
+            );
+
+            selectedDriverId = null;
+            selectedTimestamp = null;
+            // fetchAndRenderDrivers() is called by fetchWithFeedback on success
         }
 
         function handleAddCallOption(callType) {
-            if (!addCallDriverId) return; addCall(addCallDriverId, callType); addCallDriverId = null;
+            if (!addCallDriverId) return;
+            addCall(addCallDriverId, callType); // addCall will be updated to use API
+            addCallDriverId = null;
         }
 
-        function saveDrivers() {
-            try { localStorage.setItem('drivers', JSON.stringify(drivers)); }
-            catch (e) { showError('Failed to save driver list state: '+e.message); console.error('[SaveDriversJS] Error:',e); }
-        }
-
-        function addDriver() {
-            console.log(`[Add Driver] Clicked. DB: ${db?"OK":"NULL"}`);
-            if (!db) { showError("DB unavailable. Cannot add driver."); return; }
-            const nameIn = document.getElementById('driverName');
-            const name = nameIn.value.trim();
-            if (name==='') { showError('Enter driver name.'); return; }
+        // Helper function for API calls with JSON body and feedback
+        async function fetchWithFeedback(url, method, body, successMessage) {
             try {
-                const drvId = Date.now();
-                drivers.push({id:drvId, name:name, checkIns:[]}); // Always push
-                db.run('INSERT INTO drivers(id,name)VALUES(?,?)',[drvId,name]);
-                nameIn.value=''; saveDb(); saveDrivers(); renderDrivers();
-            } catch(e){ showError('Error adding driver: '+e.message); console.error('[AddDrv] Error:',e); }
-        }
-
-        function checkIn(driverId) {
-            console.log(`[CheckIn] Drv: ${driverId}. DB: ${db?"OK":"NULL"}`);
-            if (!db) { showError("DB unavailable. Cannot check in."); return; }
-            const drv = drivers.find(d=>d.id===driverId);
-            if (!drv) { showError('Driver not in list.'); return; }
-            const today = new Date().toISOString().split('T')[0];
-            if (drv.checkIns.find(c=>c.date===today)) { showError('Driver already checked in.'); return; }
-            try {
-                const time = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit', second: '2-digit', hour12:false}); 
-                drv.checkIns.push({date:today,checkInTime:time,calls:[],signOutTime:null});
-                db.run('INSERT INTO check_ins(driver_id,date,check_in_time)VALUES(?,?,?)',[driverId,today,time]);
-                saveDb(); saveDrivers(); renderDrivers();
-            } catch(e){ showError('Error checking in: '+e.message); console.error('[CheckIn] Error:',e); }
-        }
-
-        function signOut(driverId) {
-            console.log(`[Sign Out] Attempt for driverId: ${driverId} (type: ${typeof driverId}). DB: ${db ? "OK" : "NULL"}`);
-            if (!db) { showError("Database unavailable. Cannot sign out."); console.error('[Sign Out] Aborted: DB not initialized.'); return; }
-            console.log("[Sign Out] Dialogs bypassed. Proceeding as if confirmed.");
-            try {
-                const driverIndex = drivers.findIndex(d => d.id === driverId);
-                if (driverIndex === -1) {
-                    showError(`Driver ID ${driverId} not found. Refresh might be needed.`);
-                    console.error(`[Sign Out] Critical: Driver ID ${driverId} not found. Available:`, drivers.map(d => d.id ));
-                    renderDrivers(); return;
+                const options = {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                };
+                if (body) {
+                    options.body = JSON.stringify(body);
                 }
-                const driver = drivers[driverIndex];
-                const today = new Date().toISOString().split('T')[0];
-                const checkIn = driver.checkIns.find(c => c.date === today);
-                if (checkIn && !checkIn.signOutTime) {
-                    const signOutTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); 
-                    checkIn.signOutTime = signOutTime; 
-                    const result = db.run('UPDATE check_ins SET sign_out_time = ? WHERE driver_id = ? AND date = ? AND sign_out_time IS NULL', [signOutTime, driverId, today]);
-                    if (result.changes === 0) console.warn('[Sign Out] DB update reported 0 changes.');
-                    drivers.splice(driverIndex, 1);
-                    saveDb(); saveDrivers(); renderDrivers();
-                    console.log(`[Sign Out] Process completed for ${driver.name}.`);
+                const response = await fetch(url, options);
+                if (!response.ok) {
+                    let errorData;
+                    try { errorData = await response.json(); } catch (e) { errorData = { message: response.statusText }; }
+                    const errDetail = errorData.error || errorData.message || `HTTP ${response.status}`;
+                    console.error(`API Error (${method} ${url}): ${errDetail}`, errorData);
+                    showError(`Error: ${errDetail}`);
+                    return null; // Indicate failure
+                }
+
+                let responseData = {}; // Default for non-JSON or empty responses
+                const contentType = response.headers.get("content-type");
+                if (contentType && contentType.indexOf("application/json") !== -1) {
+                    responseData = await response.json(); // Parse JSON only if header indicates it
+                } else if (response.status === 204) { // No Content
+                    // responseData remains {}
                 } else {
-                    showError('Driver cannot be signed out: Not checked in or already signed out.');
+                    // If not JSON and not 204, maybe text? Or handle as unexpected.
+                    // For now, we assume JSON or nothing for successful mutations.
+                    console.log(`Response for ${method} ${url} was not JSON, status ${response.status}`);
                 }
-            } catch (e) {
-                showError('Error signing out driver: ' + e.message); console.error('[Sign Out] Error:', e);
+
+
+                if (successMessage) {
+                    showError(responseData.message || successMessage); // Prefer API message
+                }
+                await fetchAndRenderDrivers(); // Refresh data
+                return responseData;
+            } catch (error) {
+                console.error(`Network or other error (${method} ${url}):`, error);
+                showError(`Network Error: ${error.message}. Could not connect to backend.`);
+                return null;
             }
         }
 
-        function addCall(driverId, callType) {
-            console.log(`[Add Call] Drv: ${driverId}, Type: ${callType}. DB: ${db?"OK":"NULL"}`);
-            if (!db) { showError("DB unavailable. Cannot add call."); return; }
-            const drv = drivers.find(d=>d.id===driverId);
-            if (!drv) { showError('Driver not found for call.'); return; }
-            const today = new Date().toISOString().split('T')[0];
-            const ci = drv.checkIns.find(c=>c.date===today);
-            if (ci && !ci.signOutTime) {
-                try {
-                    const time = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit', second: '2-digit', hour12:false}); 
-                    const prefix = callType.substring(0,3).trim()||"Call";
-                    const ts = `${prefix} ${time}`;
-                    ci.calls.push(ts);
-                    const res = db.exec('SELECT id FROM check_ins WHERE driver_id=? AND date=?',[driverId,today]);
-                    if(!res[0]||!res[0].values[0]) throw new Error('Active check-in not found for call.');
-                    const ciId = res[0].values[0][0];
-                    db.run('INSERT INTO calls(check_in_id,timestamp)VALUES(?,?)',[ciId,ts]);
-                    saveDb(); saveDrivers(); renderDrivers();
-                } catch(e){ showError('Error adding call: '+e.message); console.error('[AddCall] Error:',e); }
-            } else { showError('Driver must be checked in & not signed out for calls.'); }
+        async function addDriver() {
+            const nameInput = document.getElementById('driverName');
+            const name = nameInput.value.trim();
+            if (name === '') {
+                showError('Enter driver name.');
+                return;
+            }
+
+            const result = await fetchWithFeedback(
+                'http://localhost:3000/api/drivers',
+                'POST',
+                { name: name },
+                'Driver added successfully!' // Default success message if API doesn't provide one
+            );
+
+            if (result) { // If API call was successful (not null)
+                nameInput.value = ''; // Clear input only on success
+            }
         }
 
-        function endShift() {
-            console.log(`[End Shift] Clicked. DB: ${db?"OK":"NULL"}`);
-            if(!confirm("End shift? (Saves summary, clears view)")) return;
-            if(!db){ showError("DB unavailable. Cannot end shift."); return; }
-            try {
-                const today = new Date().toISOString().split('T')[0];
-                let totDrv=0, totCall=0, totCanc=0;
-                const res = db.exec('SELECT id,driver_id FROM check_ins WHERE date=?',[today]);
-                if(res[0]&&res[0].values.length>0){
-                    const drvIds = new Set(res[0].values.map(r=>r[1]));
-                    totDrv = drvIds.size;
-                    res[0].values.forEach(ci=>{
-                        const callRes = db.exec('SELECT COUNT(*)FROM calls WHERE check_in_id=?',[ci[0]]);
-                        if(callRes[0]&&callRes[0].values[0]) totCall+=callRes[0].values[0][0];
-                        const cancRes = db.exec('SELECT COUNT(*)FROM call_status WHERE check_in_id=? AND status="cancelled"',[ci[0]]);
-                        if(cancRes[0]&&cancRes[0].values[0]) totCanc+=cancRes[0].values[0][0];
-                    });
-                }
-                const ex = db.exec('SELECT id FROM shifts WHERE date=?',[today]);
-                if(ex[0]&&ex[0].values.length>0) db.run('UPDATE shifts SET total_drivers=?,total_calls=?,total_canceled_calls=? WHERE date=?',[totDrv,totCall,totCanc,today]);
-                else db.run('INSERT INTO shifts(date,total_drivers,total_calls,total_canceled_calls)VALUES(?,?,?,?)',[today,totDrv,totCall,totCanc]);
-                drivers=[]; saveDrivers(); saveDb(); renderDrivers(); 
-                showError('Shift ended. Summary saved.');
-            } catch(e){ showError('Error ending shift: '+e.message); console.error('[EndShift] Error:',e); }
+        async function checkIn(driverId) {
+            console.log(`Attempting check-in for driver ID: ${driverId}`);
+            await fetchWithFeedback(
+                `http://localhost:3000/api/checkin`,
+                'POST',
+                { driverId: driverId },
+                'Driver checked in successfully!' // Default success message
+            );
+            // fetchAndRenderDrivers() is called by fetchWithFeedback on success
         }
-        
-        // Sort toggle function
+
+        async function signOut(driverId) {
+            console.log(`Attempting sign-out for driver ID: ${driverId}`);
+            // Optional: Add a confirmation dialog if desired
+            // if (!confirm("Are you sure you want to sign out this driver?")) {
+            //     return;
+            // }
+            await fetchWithFeedback(
+                `http://localhost:3000/api/signout`,
+                'POST',
+                { driverId: driverId },
+                'Driver signed out successfully!' // Default success message
+            );
+            // fetchAndRenderDrivers() is called by fetchWithFeedback on success
+        }
+
+        async function addCall(driverId, callType) {
+            console.log(`Attempting to add call type '${callType}' for driver ID: ${driverId}`);
+            await fetchWithFeedback(
+                `http://localhost:3000/api/calls`,
+                'POST',
+                { driverId: driverId, callType: callType },
+                'Call added successfully!' // Default success message
+            );
+            // fetchAndRenderDrivers() is called by fetchWithFeedback on success
+        }
+
+        async function endShift() {
+            if (!confirm("Are you sure you want to end the shift? This will save a summary and clear the current view.")) {
+                return;
+            }
+
+            console.log("Ending shift and submitting summary to backend...");
+            const result = await fetchWithFeedback(
+                'http://localhost:3000/api/shifts/end',
+                'POST',
+                {}, // No body needed for this request as backend calculates based on current day
+                'Shift ended and summary saved successfully!' // Default success message
+            );
+
+            if (result) {
+                // If backend confirms, clear the local view
+                drivers = [];
+                renderDrivers(); // Re-render to show empty list
+                // The fetchAndRenderDrivers() called by fetchWithFeedback will likely get an empty list
+                // if the backend logic for GET /api/drivers is tied to "active" non-ended shifts,
+                // or it might just show all drivers if not. For now, explicitly clearing is fine.
+                // A better UX might be to fetch a list of historical shifts or a confirmation message.
+            }
+        }
+
         function toggleSortOrder() {
-            sortByClearedOrder = !sortByClearedOrder; 
+            sortByClearedOrder = !sortByClearedOrder;
             const sortButton = document.getElementById('sortButton');
             if (sortByClearedOrder) {
                 sortButton.textContent = 'Sort by Sign-In Time';
                 sortButton.classList.remove('bg-indigo-500', 'hover:bg-indigo-600', 'active:bg-indigo-700');
                 sortButton.classList.add('bg-pink-500', 'hover:bg-pink-600', 'active:bg-pink-700');
-                console.log("[Sort Toggle] Sorting by Cleared Time ENABLED.");
             } else {
                 sortButton.textContent = 'Sort by Cleared Time';
                 sortButton.classList.remove('bg-pink-500', 'hover:bg-pink-600', 'active:bg-pink-700');
                 sortButton.classList.add('bg-indigo-500', 'hover:bg-indigo-600', 'active:bg-indigo-700');
-                console.log("[Sort Toggle] Sorting by Cleared Time DISABLED (default sign-in order).");
             }
-            renderDrivers(); 
+            renderDrivers();
         }
 
-
         function renderDrivers() {
-            console.log(`[RenderDrivers] Starting. SortByCleared: ${sortByClearedOrder}. Global drivers array (before copy, ${drivers.length}):`, JSON.parse(JSON.stringify(drivers.map(d => ({id: d.id, name: d.name, checkIns: d.checkIns.length})))));
-            
-            let driversToRender = [...drivers]; 
-            const today = new Date().toISOString().split('T')[0];
+            console.log(`[RenderDrivers] Starting. SortByCleared: ${sortByClearedOrder}. Drivers count: ${drivers.length}`);
+            let driversToRender = [...drivers];
 
-            if (sortByClearedOrder && db) {
-                console.log(`[RenderDrivers - SortActive] Mapping drivers to get relevantClearedTimestamp for date: ${today}`);
-                const augmentedDrivers = driversToRender.map(driver => {
-                    let relevantClearedTimestamp = null; 
-                    const driverTodayCheckIn = driver.checkIns.find(c => c.date === today);
-                    if (driverTodayCheckIn) {
-                        try {
-                            const checkInIdResult = db.exec('SELECT id FROM check_ins WHERE driver_id = ? AND date = ?', [driver.id, today]);
-                            if (checkInIdResult[0] && checkInIdResult[0].values[0]) {
-                                const checkInId = checkInIdResult[0].values[0][0];
-                                // MODIFIED: Get MOST RECENT cleared timestamp (ORDER BY DESC)
-                                const clearedStatusResult = db.exec( `SELECT status_timestamp FROM call_status WHERE check_in_id = ? AND status = 'cleared' ORDER BY status_timestamp DESC LIMIT 1`, [checkInId]);
-                                if (clearedStatusResult[0] && clearedStatusResult[0].values[0] && clearedStatusResult[0].values[0][0] !== null) {
-                                    relevantClearedTimestamp = clearedStatusResult[0].values[0][0];
-                                    console.log(`[RenderDrivers - SortMap - FETCHED] Driver: ${driver.name} (ID: ${driver.id}), CheckInID: ${checkInId}, Fetched LATEST ClearedTS from DB: ${relevantClearedTimestamp}`);
-                                }
-                            }
-                        } catch (e) { console.error(`[RenderDrivers - SortMap DBG] DB error for driver ${driver.id} fetching LATEST ClearedTS:`, e); }
-                    }
-                    return { ...driver, relevantClearedTimestamp }; 
-                });
-                console.log("[RenderDrivers - SortActive] Augmented (before sort):", JSON.parse(JSON.stringify(augmentedDrivers.map(d => ({name:d.name, rct:d.relevantClearedTimestamp, cit:d.checkIns.find(c=>c.date===today)?.checkInTime})))));
-                augmentedDrivers.sort((a, b) => {
-                    const checkInA_obj = a.checkIns.find(c => c.date === today); const citA = checkInA_obj ? checkInA_obj.checkInTime : null;
-                    const checkInB_obj = b.checkIns.find(c => c.date === today); const citB = checkInB_obj ? checkInB_obj.checkInTime : null;
-                    
-                    // MODIFIED: Sort by MOST RECENT cleared time (descending for time strings)
+            // Data from backend is now rich: {id, name, isCheckedIn, checkInTime, signOutTime, calls: [...], relevantClearedTimestamp}
+            if (sortByClearedOrder) {
+                console.log("[RenderDrivers] Sorting by Cleared Time.");
+                driversToRender.sort((a, b) => {
+                    // Sort by MOST RECENT relevantClearedTimestamp (descending for time strings)
                     if (a.relevantClearedTimestamp && b.relevantClearedTimestamp) {
-                        return b.relevantClearedTimestamp.localeCompare(a.relevantClearedTimestamp); // Sort DESC for time
+                        return b.relevantClearedTimestamp.localeCompare(a.relevantClearedTimestamp);
                     }
                     if (a.relevantClearedTimestamp) return -1; // a has cleared, b does not -> a comes first
                     if (b.relevantClearedTimestamp) return 1;  // b has cleared, a does not -> b comes first
-                    
-                    // Fallback to check-in time (ascending)
-                    if (citA && citB) return citA.localeCompare(citB);
-                    if (citA) return -1; 
-                    if (citB) return 1;
-                    return a.id - b.id; // Ultimate fallback
+
+                    // Fallback to check-in time (ascending) if no relevant cleared times
+                    if (a.checkInTime && b.checkInTime) return a.checkInTime.localeCompare(b.checkInTime);
+                    if (a.checkInTime) return -1;
+                    if (b.checkInTime) return 1;
+                    return (a.name || "").localeCompare(b.name || ""); // Ultimate fallback by name
                 });
-                driversToRender = augmentedDrivers;
-                console.log("[RenderDrivers - SortActive] Drivers after sort:", JSON.parse(JSON.stringify(driversToRender.map(d => ({name:d.name, rct:d.relevantClearedTimestamp, cit:d.checkIns.find(c=>c.date===today)?.checkInTime})))));
-            } else { 
-                 console.log("[RenderDrivers] Using default Sign-In Time order.");
+            } else {
+                 console.log("[RenderDrivers] Sorting by Sign-In Time.");
                  driversToRender.sort((a, b) => {
-                    const checkInA_obj = a.checkIns.find(c => c.date === today); const checkInTimeA = checkInA_obj ? checkInA_obj.checkInTime : null;
-                    const checkInB_obj = b.checkIns.find(c => c.date === today); const checkInTimeB = checkInB_obj ? checkInB_obj.checkInTime : null;
-                    
-                    if (checkInTimeA && !checkInTimeB) return -1; 
-                    if (!checkInTimeA && checkInTimeB) return 1;  
-                    if (checkInTimeA && checkInTimeB) {
-                        const compareResult = checkInTimeA.localeCompare(checkInTimeB);
+                    if (a.checkInTime && !b.checkInTime) return -1;
+                    if (!a.checkInTime && b.checkInTime) return 1;
+                    if (a.checkInTime && b.checkInTime) {
+                        const compareResult = a.checkInTime.localeCompare(b.checkInTime);
                         if (compareResult !== 0) return compareResult;
                     }
-                    return a.id - b.id; 
+                    // Fallback to name if check-in times are same or both null
+                    return (a.name || "").localeCompare(b.name || "");
                  });
-                 console.log("[RenderDrivers - DefaultSort] Drivers after sort:", JSON.parse(JSON.stringify(driversToRender.map(d => ({name: d.name, id: d.id, checkInTime: d.checkIns.find(c=>c.date===today)?.checkInTime })))));
             }
-            
+
             const driverList = document.getElementById('driverList');
             driverList.innerHTML = '';
             if (driversToRender.length === 0) {
-                driverList.innerHTML = '<p class="text-gray-500 text-center py-4">No drivers for current shift.</p>';
+                driverList.innerHTML = '<p class="text-gray-500 text-center py-4">No drivers to display.</p>';
                 return;
             }
+
             driversToRender.forEach(driver => {
-                const todayCheckIn = driver.checkIns.find(c => c.date === today);
-                const isCheckedIn = !!todayCheckIn;
-                const checkInTime = todayCheckIn ? todayCheckIn.checkInTime : null;
-                const callTimestamps = todayCheckIn && todayCheckIn.calls ? todayCheckIn.calls : [];
-                const signOutTime = todayCheckIn ? todayCheckIn.signOutTime : null;
-                let callStatuses = {};
-                if (isCheckedIn && todayCheckIn && db) {
-                    try {
-                        const ciIdRes = db.exec('SELECT id FROM check_ins WHERE driver_id = ? AND date = ?', [driver.id, today]);
-                        if (ciIdRes[0] && ciIdRes[0].values[0]) {
-                            const ciId = ciIdRes[0].values[0][0];
-                            const stRes = db.exec('SELECT call_timestamp, status, status_timestamp FROM call_status WHERE check_in_id = ?', [ciId]);
-                            if (stRes[0]) stRes[0].values.forEach(([ts,s,sts]) => callStatuses[ts] = {status:s, statusTimestamp:sts});
-                        }
-                    } catch (e) { console.error(`[RenderDrivers] Error fetching statuses for driver ${driver.id}:`, e); }
-                }
+                const { id, name, isCheckedIn, checkInTime, signOutTime, calls, relevantClearedTimestamp } = driver;
+
                 const card = document.createElement('div');
                 card.className = 'border border-gray-200 rounded-lg p-4 relative shadow-sm hover:shadow-md transition-shadow';
-                let content = `<p class="text-lg font-medium text-gray-800">${driver.name}</p>`;
-                // MODIFIED: Display relevantClearedTimestamp (which is now latest cleared)
-                if (sortByClearedOrder && driver.relevantClearedTimestamp) { 
-                    content += `<p class="text-xs text-pink-600 font-semibold">Last Cleared: ${driver.relevantClearedTimestamp}</p>`;
+                let content = `<p class="text-lg font-medium text-gray-800">${name} (ID: ${id})</p>`;
+
+                if (sortByClearedOrder && relevantClearedTimestamp) {
+                    content += `<p class="text-xs text-pink-600 font-semibold">Last Cleared: ${relevantClearedTimestamp}</p>`;
                 }
-                if (!isCheckedIn) content += `<p class="text-sm text-gray-500">Not checked in</p>`;
-                else {
-                    content += `<div class="text-sm text-gray-600">In: <span class="font-semibold">${checkInTime}</span>${signOutTime ? ` | Out: <span class="font-semibold">${signOutTime}</span>` : ''}</div>`;
-                    if (callTimestamps.length > 0) {
-                        content += `<div class="mt-2"><p class="text-xs font-semibold text-gray-700">Calls:</p><div class="timestamps-container mt-1">`;
-                        callTimestamps.forEach(callTs => {
-                            const sInfo = callStatuses[callTs];
-                            let callCls = 'bg-gray-200 text-gray-800', stCls = 'bg-transparent text-transparent', stTs = '&nbsp;'; 
-                            if (sInfo) {
-                                if (sInfo.status === 'cancelled') { callCls = 'bg-red-100 text-red-600 line-through'; stCls = 'bg-red-500 text-white'; }
-                                else if (sInfo.status === 'cleared') { callCls = 'bg-green-100 text-green-700'; stCls = 'bg-green-500 text-white'; }
-                                stTs = sInfo.statusTimestamp;
-                            }
-                            const callCtx = !signOutTime ? `oncontextmenu="event.preventDefault(); showContextMenu(event, ${driver.id}, '${callTs}');"` : "";
-                            const stCtx = !signOutTime && sInfo?.status==='cancelled' ? `oncontextmenu="event.preventDefault();showStatusChangeMenu(event,${driver.id},'${callTs}','cancelled');"` : "";
-                            content += `<div class="timestamp-pair mr-1 mb-1 p-0.5 border border-gray-200 rounded-md"><span class="timestamp-item ${callCls}" ${callCtx}>${callTs}</span><span class="status-timestamp ${stCls}" ${stCtx}>${stTs}</span></div>`;
-                        });
-                        content += `</div></div>`;
-                    } else if (!signOutTime) content += `<p class="text-xs text-gray-500 mt-2">No calls yet.</p>`;
+
+                // Logic for displaying driver status
+                if (!checkInTime && !signOutTime) { // Never checked in, or backend didn't return checkInTime (should not happen for existing drivers)
+                    content += `<p class="text-sm text-gray-500">Not checked in today</p>`;
+                } else if (isCheckedIn) { // Actively checked in
+                    content += `<div class="text-sm text-gray-600">In: <span class="font-semibold">${checkInTime}</span></div>`;
+                } else if (signOutTime) { // Checked in earlier and then signed out
+                     content += `<div class="text-sm text-gray-600">In: <span class="font-semibold">${checkInTime}</span> | Out: <span class="font-semibold">${signOutTime}</span></div>`;
+                     // Optionally, display calls made during that session even if signed out
                 }
+
+
+                if (calls && calls.length > 0) {
+                    content += `<div class="mt-2"><p class="text-xs font-semibold text-gray-700">Calls:</p><div class="timestamps-container mt-1">`;
+                    calls.forEach(call => {
+                        const callTsFull = call.fullCallTimestamp; // Already reconstructed by backend
+                        const sInfo = call.statusInfo;
+                        let callCls = 'bg-gray-200 text-gray-800', stCls = 'bg-transparent text-transparent', stTs = '&nbsp;';
+                        if (sInfo) {
+                            if (sInfo.status === 'cancelled') { callCls = 'bg-red-100 text-red-600 line-through'; stCls = 'bg-red-500 text-white'; }
+                            else if (sInfo.status === 'cleared') { callCls = 'bg-green-100 text-green-700'; stCls = 'bg-green-500 text-white'; }
+                            stTs = sInfo.statusTimestamp;
+                        }
+                        // Context menus should only be active if the driver is currently checked in (isCheckedIn = true)
+                        const callCtx = isCheckedIn ? `oncontextmenu="event.preventDefault(); showContextMenu(event, ${id}, '${callTsFull}');"` : "";
+                        const currentCallStatus = sInfo ? sInfo.status : undefined;
+                        const stCtx = isCheckedIn && currentCallStatus ==='cancelled' ? `oncontextmenu="event.preventDefault();showStatusChangeMenu(event,${id},'${callTsFull}','${currentCallStatus}');"` : "";
+                        content += `<div class="timestamp-pair mr-1 mb-1 p-0.5 border border-gray-200 rounded-md"><span class="timestamp-item ${callCls}" ${callCtx}>${callTsFull}</span><span class="status-timestamp ${stCls}" ${stCtx}>${stTs}</span></div>`;
+                    });
+                    content += `</div></div>`;
+                } else if (isCheckedIn) { // isCheckedIn but no calls array or empty calls
+                     content += `<p class="text-xs text-gray-500 mt-2">No calls yet.</p>`;
+                }
+
+
                 let buttons = '<div class="absolute top-4 right-4 flex flex-col space-y-2 sm:flex-row sm:space-y-0 sm:space-x-2">';
-                if (!isCheckedIn) buttons += `<button onclick="checkIn(${driver.id})" class="bg-green-500 text-white px-3 py-1 text-sm rounded-md hover:bg-green-600 shadow-sm">Check In</button>`;
-                else if (!signOutTime) {
-                    buttons += `<button oncontextmenu="event.preventDefault();showAddCallMenu(event,${driver.id})" class="bg-yellow-500 text-white px-3 py-1 text-sm rounded-md hover:bg-yellow-600 shadow-sm">Add Call</button>`;
-                    buttons += `<button onclick="signOut(${driver.id})" class="bg-red-500 text-white px-3 py-1 text-sm rounded-md hover:bg-red-600 shadow-sm">Sign Out</button>`;
-                } else buttons += `<span class="text-xs text-gray-500 italic">Signed Out</span>`;
+                if (!isCheckedIn && !signOutTime) { // Not checked in at all today
+                    buttons += `<button onclick="checkIn(${id})" class="bg-green-500 text-white px-3 py-1 text-sm rounded-md hover:bg-green-600 shadow-sm">Check In</button>`;
+                } else if (isCheckedIn) { // Actively checked in (signOutTime is null)
+                    buttons += `<button oncontextmenu="event.preventDefault();showAddCallMenu(event,${id})" class="bg-yellow-500 text-white px-3 py-1 text-sm rounded-md hover:bg-yellow-600 shadow-sm">Add Call</button>`;
+                    buttons += `<button onclick="signOut(${id})" class="bg-red-500 text-white px-3 py-1 text-sm rounded-md hover:bg-red-600 shadow-sm">Sign Out</button>`;
+                } else { // Signed out for the day (signOutTime is not null, isCheckedIn is false)
+                    buttons += `<span class="text-xs text-gray-500 italic">Signed Out</span>`;
+                }
                 buttons += '</div>';
                 card.innerHTML = `<div>${content}</div>${buttons}`;
                 driverList.appendChild(card);
@@ -654,36 +491,40 @@
         }
 
         // App Initialization
-        console.log('[App Init] Script starting. Initializing DB next.');
+        console.log('[App Init] Script starting. Will fetch data from backend.');
         showLoading();
-        initDb().then(() => {
-            console.log('[App Init] initDb promise resolved. DB should be initialized (or fallback).');
-            const storedDrivers = localStorage.getItem('drivers');
-            if (storedDrivers) {
-                try {
-                    let parsedDrivers = JSON.parse(storedDrivers);
-                    drivers = parsedDrivers.map(driver => ({
-                        ...driver,
-                        checkIns: Array.isArray(driver.checkIns) ? driver.checkIns : [] 
-                    }));
-                    console.log(`[App Init] Successfully parsed and normalized ${drivers.length} drivers from localStorage.`);
-                } catch (e) {
-                    console.error("[App Init] Error parsing 'drivers' from localStorage:", e);
-                    drivers = []; 
-                    localStorage.removeItem('drivers'); 
-                    showError("Driver list from storage was corrupted, starting fresh for drivers list.");
+
+        async function fetchAndRenderDrivers() {
+            console.log('[App Init] Fetching drivers from backend...');
+            try {
+                const response = await fetch('http://localhost:3000/api/drivers');
+                if (!response.ok) {
+                    let errorData;
+                    try { errorData = await response.json(); } catch (e) { errorData = { message: response.statusText };}
+                    throw new Error(`Failed to fetch drivers: ${response.status} ${errorData.error || errorData.message}`);
                 }
-            } else {
+                const fetchedDrivers = await response.json();
+
+                // Backend now returns the rich driver objects directly.
+                // No complex mapping with placeholders needed here anymore.
+                // The structure of each element in fetchedDrivers should be:
+                // { id, name, isCheckedIn, checkInTime, signOutTime, calls: [{id, callType, timestamp, fullCallTimestamp, statusInfo}, ...], relevantClearedTimestamp }
+                drivers = fetchedDrivers;  // Directly assign the rich data from backend
+
+                console.log(`[App Init] Successfully fetched ${drivers.length} drivers with detailed data.`);
+                renderDrivers();
+            } catch (e) {
+                console.error('[App Init] CRITICAL FAILURE fetching drivers:', e);
+                showInitError('App Error: Could not load driver data from backend. Check console. Error: ' + e.message);
                 drivers = [];
-                console.log('[App Init] No drivers found in localStorage. Initializing empty drivers array.');
+                renderDrivers();
+            } finally {
+                showApp();
             }
-            renderDrivers();
-            showApp();
-            console.log('[App Init] App fully initialized and displayed.');
-        }).catch(e => { 
-            console.error('[App Init] CRITICAL: initDb promise was rejected:', e);
-            showInitError('FATAL ERROR: Application could not start correctly due to DB init failure. Please check console. Error: ' + e.message);
-        });
+        }
+
+        // Initial load:
+        fetchAndRenderDrivers();
     </script>
 </body>
 </html>
